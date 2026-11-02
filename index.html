@@ -123,6 +123,12 @@ footer.wrap{padding-block:4px 22px;text-align:right;font-size:12px;color:var(--m
       </div>
       <ul class="hist" id="hist"></ul>
     </div>
+    <div class="card" style="margin-top:18px">
+      <h2>Karten zum Ausdrucken</h2>
+      <p class="muted" style="margin:0 0 8px">24 verschiedene Karten (Nummer 1 bis 24) als PDF, je 2 auf einer A4-Seite zum Durchschneiden.</p>
+      <button class="btn" id="btnPdf" type="button">24 Karten als PDF herunterladen</button>
+      <p class="muted" id="pdfNote" style="margin:8px 0 0" aria-live="polite"></p>
+    </div>
   </section>
 
   <!-- Meine Karte -->
@@ -236,8 +242,79 @@ $("btnCheck").onclick=()=>{
   out.querySelectorAll("button.cell").forEach(c=>c.tabIndex=-1);
 };
 
+
+// ---------- PDF mit 24 Karten (ohne Zusatzbibliothek) ----------
+function pdfBytes(str){const b=new Uint8Array(str.length);for(let i=0;i<str.length;i++)b[i]=str.charCodeAt(i)&255;return b;}
+const CP={"–":150,"—":151,"…":133,"„":132,"“":147,"”":148,"‘":145,"’":146,"€":128};
+function winAnsi(s){let o="";for(const ch of s){let c=CP[ch]!==undefined?CP[ch]:ch.charCodeAt(0);if(c>255)c=63;const x=String.fromCharCode(c);o+=(x==="("||x===")"||x==="\\")?"\\"+x:x;}return o;}
+const mctx=document.createElement("canvas").getContext("2d");
+function tw(s,size,bold){mctx.font=(bold?"bold ":"")+size+"px Helvetica, Arial, sans-serif";return mctx.measureText(s).width;}
+function iconJpeg(){return new Promise(res=>{const img=new Image();img.onload=()=>{const c=document.createElement("canvas");c.width=c.height=180;const x=c.getContext("2d");x.fillStyle="#fff";x.fillRect(0,0,180,180);x.drawImage(img,0,0,180,180);
+  const d=atob(c.toDataURL("image/jpeg",0.92).split(",")[1]);res(d);};img.onerror=()=>res(null);img.src=ICON;});}
+async function makeCardsPdf(){
+  const W=595.28,H=841.89,half=H/2,n=pool.size,jpg=await iconJpeg();
+  const navy="0.071 0.212 0.357",pages=[];
+  for(let pg=0;pg<12;pg++){
+    let s="";
+    for(let h=0;h<2;h++){
+      const no=pg*2+h+1,card=cardOf(pool,no),top=H-h*half;
+      const x0=34,x1=W-34,yHead=top-44;
+      s+="BT /F1 17 Tf "+navy+" rg "+x0+" "+yHead.toFixed(2)+" Td ("+winAnsi("Mathe-Bingo")+") Tj ET\n";
+      const lab=poolLabel()+" · Karte "+no,lw=tw(lab,11,true);
+      s+="BT /F1 11 Tf "+navy+" rg "+(x1-lw).toFixed(2)+" "+yHead.toFixed(2)+" Td ("+winAnsi(lab)+") Tj ET\n";
+      s+=navy+" RG 1.5 w "+x0+" "+(yHead-7).toFixed(2)+" m "+x1+" "+(yHead-7).toFixed(2)+" l S\n";
+      const gTop=yHead-16,gBot=top-half+44,cw=(x1-x0)/n,ch=(gTop-gBot)/n;
+      for(let k=0;k<card.length;k++){
+        const r=Math.floor(k/n),c=k%n,cx=x0+c*cw,cy=gTop-(r+1)*ch;
+        s+=navy+" RG 1.2 w "+(cx+2).toFixed(2)+" "+(cy+2).toFixed(2)+" "+(cw-4).toFixed(2)+" "+(ch-4).toFixed(2)+" re S\n";
+        if(card[k]===-1){
+          if(jpg){const sz=Math.min(cw,ch)*0.62;s+="q "+sz.toFixed(2)+" 0 0 "+sz.toFixed(2)+" "+(cx+(cw-sz)/2).toFixed(2)+" "+(cy+(ch-sz)/2).toFixed(2)+" cm /Im1 Do Q\n";}
+          continue;}
+        const word=pool.words[card[k]][0],maxW=cw-12;
+        const base={3:22,4:16,5:12}[n];let size=base,lines=[word];
+        while(size>base*0.75&&tw(word,size,true)>maxW)size-=0.5;
+        if(tw(word,size,true)>maxW){const m=Math.ceil(word.length/2);lines=[word.slice(0,m)+"-",word.slice(m)];size={3:22,4:16,5:12}[n];
+          while(size>6&&Math.max(...lines.map(l=>tw(l,size,true)))>maxW)size-=0.5;}
+        const lh=size*1.15,startY=cy+ch/2+(lines.length-1)*lh/2-size*0.35;
+        lines.forEach((l,i)=>{const lw2=tw(l,size,true);s+="BT /F1 "+size+" Tf 0 0 0 rg "+(cx+(cw-lw2)/2).toFixed(2)+" "+(startY-i*lh).toFixed(2)+" Td ("+winAnsi(l)+") Tj ET\n";});
+      }
+      const foot="Emil-Petri-Schule Arnstadt · Erstellt von Marion Klugmann (November 2026) mit freundlicher Unterstützung von Claude.",fw=tw(foot,7,false);
+      s+="BT /F2 7 Tf 0.32 0.4 0.49 rg "+(x1-fw).toFixed(2)+" "+(top-half+26).toFixed(2)+" Td ("+winAnsi(foot)+") Tj ET\n";
+    }
+    s+="0.5 0.5 0.5 RG 0.8 w [5 4] 0 d 20 "+half.toFixed(2)+" m "+(W-20)+" "+half.toFixed(2)+" l S [] 0 d\n";
+    s+="BT /F2 7 Tf 0.5 0.5 0.5 rg 24 "+(half+4).toFixed(2)+" Td ("+winAnsi("hier durchschneiden")+") Tj ET\n";
+    pages.push(s);
+  }
+  // PDF zusammensetzen
+  const objs=[];const add=o=>{objs.push(o);return objs.length;};
+  const cat=add(null),pagesId=add(null),f1=add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>"),
+        f2=add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
+  const im=jpg?add({img:jpg}):0,kids=[];
+  pages.forEach(s=>{const c=add({stream:s});kids.push(add("<< /Type /Page /Parent "+pagesId+" 0 R /MediaBox [0 0 "+W+" "+H+"] /Resources << /Font << /F1 "+f1+" 0 R /F2 "+f2+" 0 R >>"+(im?" /XObject << /Im1 "+im+" 0 R >>":"")+" >> /Contents "+c+" 0 R >>"));});
+  objs[cat-1]="<< /Type /Catalog /Pages "+pagesId+" 0 R >>";
+  objs[pagesId-1]="<< /Type /Pages /Kids ["+kids.map(k=>k+" 0 R").join(" ")+"] /Count "+kids.length+" >>";
+  let out="%PDF-1.4\n%\xE2\xE3\xCF\xD3\n";const offs=[];
+  objs.forEach((o,i)=>{offs.push(out.length);out+=(i+1)+" 0 obj\n";
+    if(typeof o==="string")out+=o+"\n";
+    else if(o.stream!==undefined)out+="<< /Length "+o.stream.length+" >>\nstream\n"+o.stream+"\nendstream\n";
+    else out+="<< /Type /XObject /Subtype /Image /Width 180 /Height 180 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length "+o.img.length+" >>\nstream\n"+o.img+"\nendstream\n";
+    out+="endobj\n";});
+  const xref=out.length;
+  out+="xref\n0 "+(objs.length+1)+"\n0000000000 65535 f \n"+offs.map(o=>String(o).padStart(10,"0")+" 00000 n \n").join("");
+  out+="trailer\n<< /Size "+(objs.length+1)+" /Root "+cat+" 0 R >>\nstartxref\n"+xref+"\n%%EOF";
+  return new Blob([pdfBytes(out)],{type:"application/pdf"});
+}
+$("btnPdf").onclick=async()=>{
+  const note=$("pdfNote");note.textContent="PDF wird erstellt …";
+  try{const blob=await makeCardsPdf(),name=("Mathe-Bingo_"+poolLabel().replace(/ · /g,"_").replace(/ /g,"-")+".pdf");
+    const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+    note.textContent="Fertig: „"+name+"“ liegt in deinen Downloads (auf dem iPad in der App „Dateien“ unter „Downloads“).";}
+  catch(e){note.textContent="Das PDF konnte nicht erstellt werden.";}
+};
+
 // ---------- Meine Karte ----------
-function cardNo(){let no=store.get("bingo-no-"+pool.id);if(!(no>=11&&no<=999)){no=11+Math.floor(Math.random()*989);store.set("bingo-no-"+pool.id,no);}return no;}
+function cardNo(){let no=store.get("bingo-no-"+pool.id);if(!(no>=25&&no<=999)){no=25+Math.floor(Math.random()*975);store.set("bingo-no-"+pool.id,no);}return no;}
 function renderCard(){
   const no=cardNo(),card=cardOf(pool,no),n=pool.size,key="bingo-marks-"+pool.id+"-"+no,marks=new Set(store.get(key)||[]);
   $("cardNo").textContent="Karte "+no;$("cardPool").textContent=poolLabel();
